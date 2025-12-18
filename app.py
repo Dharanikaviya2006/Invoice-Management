@@ -24,16 +24,32 @@ def index():
 # ---------- CLIENTS ----------
 @app.route("/api/clients", methods=["GET"])
 def get_clients():
+    sample_clients = [
+        {"id": -1, "name": "Aarav Sharma", "address": "", "email": "aarav.sharma@example.com"},
+        {"id": -2, "name": "Vihaan Patel", "address": "", "email": "vihaan.patel@example.com"},
+        {"id": -3, "name": "Ananya Singh", "address": "", "email": "ananya.singh@example.com"},
+        {"id": -4, "name": "Ishaan Kumar", "address": "", "email": "ishaan.kumar@example.com"},
+        {"id": -5, "name": "Saanvi Reddy", "address": "", "email": "saanvi.reddy@example.com"}
+    ]
+    conn = None
+    cur = None
     try:
         conn = get_connection()
         cur = conn.cursor(dictionary=True)
         cur.execute("SELECT id, name, address, email FROM clients ORDER BY name")
-        clients = cur.fetchall()
-        cur.close()
-        conn.close()
+        clients = cur.fetchall() or []
+        if not clients:
+            # return sample list when DB is empty
+            return jsonify({"success": True, "clients": sample_clients, "sample": True})
         return jsonify({"success": True, "clients": clients})
     except Error as e:
-        return jsonify({"success": False, "message": str(e)}), 500
+        # on DB error return sample clients so frontend remains usable
+        return jsonify({"success": True, "clients": sample_clients, "sample": True, "message": str(e)})
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 @app.route("/api/clients", methods=["POST"])
 def add_client():
@@ -41,6 +57,9 @@ def add_client():
     name = (data.get("name") or "").strip()
     if len(name) < 2:
         return jsonify({"success": False, "message": "Client name must be at least 2 characters"}), 400
+
+    conn = None
+    cur = None
     try:
         conn = get_connection()
         cur = conn.cursor(dictionary=True)
@@ -48,8 +67,6 @@ def add_client():
         cur.execute("SELECT id FROM clients WHERE LOWER(name) = LOWER(%s)", (name,))
         existing = cur.fetchone()
         if existing:
-            cur.close()
-            conn.close()
             return jsonify({"success": False, "message": "Client already exists"}), 400
         cur.execute(
             "INSERT INTO clients (name) VALUES (%s)",
@@ -57,11 +74,28 @@ def add_client():
         )
         conn.commit()
         new_id = cur.lastrowid
-        cur.close()
-        conn.close()
-        return jsonify({"success": True, "message": "Client added successfully", "client_id": new_id})
+        # return the created client so frontend can append without reloading
+        client = {"id": new_id, "name": name}
+        return jsonify({"success": True, "message": "Client added successfully", "client": client})
     except Error as e:
         return jsonify({"success": False, "message": str(e)}), 500
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/sample_items", methods=["GET"])
+def sample_items():
+    items = [
+        {"description": "Website Development - Basic", "unit_price": 15000, "gst_percentage": 18},
+        {"description": "Mobile App - MVP", "unit_price": 40000, "gst_percentage": 18},
+        {"description": "Monthly Maintenance", "unit_price": 5000, "gst_percentage": 18},
+        {"description": "Logo Design", "unit_price": 4000, "gst_percentage": 18},
+        {"description": "Consultation (per hour)", "unit_price": 1000, "gst_percentage": 18}
+    ]
+    return jsonify({"success": True, "items": items})
 
 # ---------- INVOICES ----------
 @app.route("/api/invoices", methods=["GET"])

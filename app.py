@@ -1,18 +1,17 @@
-from flask import Flask, jsonify, request, render_template
+from flask import Flask, jsonify, request, render_template, make_response
 from flask_cors import CORS
 import mysql.connector
 from mysql.connector import Error
 from datetime import datetime
 
 app = Flask(__name__)
-# Allow front-end on same origin or different port (e.g., 5500, 5173)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 DB_CONFIG = {
     "host": "localhost",
-    "user": "root",
-    "password": "root",          # UPDATE to your password
-    "database": "invoice_db_v2"  # Must match schema.sql
+    "user": "root",          # change if needed
+    "password": "root",      # change if needed
+    "database": "invoice_db_v2"
 }
 
 def get_connection():
@@ -20,10 +19,9 @@ def get_connection():
 
 @app.route("/")
 def index():
-    # Make sure templates/index.html exists
     return render_template("index.html")
 
-# ============ CLIENT APIs ============
+# ---------- CLIENTS ----------
 
 @app.route("/api/clients", methods=["GET"])
 def get_clients():
@@ -43,23 +41,18 @@ def get_clients():
 @app.route("/api/clients", methods=["POST"])
 def add_client():
     try:
-        data = request.get_json(force=True)  # force=True: handle missing header gracefully
+        data = request.get_json(force=True)
     except Exception:
         return jsonify({"success": False, "message": "Invalid JSON payload"}), 400
 
     name = (data.get("name") or "").strip()
-
     if len(name) < 2:
-        return jsonify({
-            "success": False,
-            "message": "Client name must be at least 2 characters"
-        }), 400
+        return jsonify({"success": False, "message": "Client name must be at least 2 characters"}), 400
 
     try:
         conn = get_connection()
         cur = conn.cursor(dictionary=True)
-
-        # Case-insensitive duplicate check
+        # case-insensitive duplicate check
         cur.execute("SELECT id FROM clients WHERE LOWER(name) = LOWER(%s)", (name,))
         existing = cur.fetchone()
         if existing:
@@ -67,28 +60,23 @@ def add_client():
             conn.close()
             return jsonify({"success": False, "message": "Client already exists"}), 409
 
-        cur.execute(
-            "INSERT INTO clients (name) VALUES (%s)",
-            (name,)
-        )
+        cur.execute("INSERT INTO clients (name) VALUES (%s)", (name,))
         conn.commit()
-        new_id = cur.lastrowid
+        client_id = cur.lastrowid
         cur.close()
         conn.close()
 
         return jsonify({
             "success": True,
             "message": "Client added successfully",
-            "client": {"id": new_id, "name": name}
+            "client": {"id": client_id, "name": name}
         }), 201
-
     except Error as e:
-        # If the table/db is wrong, you will see the exact error in response and console
         return jsonify({"success": False, "message": f"DB error: {e}"}), 500
     except Exception as e:
         return jsonify({"success": False, "message": f"Server error: {e}"}), 500
 
-# ============ INVOICE APIs (unchanged from earlier, but kept complete) ============
+# ---------- INVOICES LIST ----------
 
 @app.route("/api/invoices", methods=["GET"])
 def list_invoices():
@@ -103,14 +91,16 @@ def list_invoices():
             JOIN clients c ON i.client_id = c.id
             ORDER BY i.id
         """)
-        rows = cur.fetchall()
+        invoices = cur.fetchall()
         cur.close()
         conn.close()
-        return jsonify({"success": True, "invoices": rows}), 200
+        return jsonify({"success": True, "invoices": invoices}), 200
     except Error as e:
         return jsonify({"success": False, "message": f"DB error: {e}"}), 500
     except Exception as e:
         return jsonify({"success": False, "message": f"Server error: {e}"}), 500
+
+# ---------- CREATE INVOICE ----------
 
 @app.route("/api/invoices", methods=["POST"])
 def create_invoice():
@@ -119,7 +109,7 @@ def create_invoice():
     except Exception:
         return jsonify({"success": False, "message": "Invalid JSON payload"}), 400
 
-    # Basic fields
+    # required fields
     try:
         client_id = int(data.get("client_id"))
     except (TypeError, ValueError):
@@ -142,7 +132,7 @@ def create_invoice():
     except Exception:
         return jsonify({"success": False, "message": "Invalid date format (use YYYY-MM-DD)"}), 400
 
-    # Totals
+    # calculate totals
     subtotal = 0.0
     tax_total = 0.0
     try:
@@ -163,14 +153,14 @@ def create_invoice():
         conn = get_connection()
         cur = conn.cursor(dictionary=True)
 
-        # Verify client exists
+        # ensure client exists
         cur.execute("SELECT id FROM clients WHERE id = %s", (client_id,))
         if not cur.fetchone():
             cur.close()
             conn.close()
             return jsonify({"success": False, "message": "Client not found"}), 400
 
-        # Insert invoice (invoice_number generated after ID known)
+        # insert invoice
         cur.execute("""
             INSERT INTO invoices
             (client_id, invoice_date, due_date, status,
@@ -188,7 +178,7 @@ def create_invoice():
                     (invoice_number, invoice_id))
         conn.commit()
 
-        # Insert line items
+        # insert items
         for it in items:
             desc = (it.get("description") or "").strip()
             qty = float(it.get("quantity", 0))
@@ -210,11 +200,12 @@ def create_invoice():
             "invoice_id": invoice_id,
             "invoice_number": invoice_number
         }), 201
-
     except Error as e:
         return jsonify({"success": False, "message": f"DB error: {e}"}), 500
     except Exception as e:
         return jsonify({"success": False, "message": f"Server error: {e}"}), 500
+
+# ---------- GET ONE INVOICE ----------
 
 @app.route("/api/invoices/<int:invoice_id>", methods=["GET"])
 def get_invoice(invoice_id):
@@ -238,7 +229,9 @@ def get_invoice(invoice_id):
             FROM invoice_items
             WHERE invoice_id = %s
         """, (invoice_id,))
-        inv["items"] = cur.fetchall()
+        items = cur.fetchall()
+        inv["items"] = items
+
         cur.close()
         conn.close()
         return jsonify({"success": True, "invoice": inv}), 200
@@ -246,6 +239,8 @@ def get_invoice(invoice_id):
         return jsonify({"success": False, "message": f"DB error: {e}"}), 500
     except Exception as e:
         return jsonify({"success": False, "message": f"Server error: {e}"}), 500
+
+# ---------- DELETE INVOICE ----------
 
 @app.route("/api/invoices/<int:invoice_id>", methods=["DELETE"])
 def delete_invoice(invoice_id):
@@ -258,6 +253,60 @@ def delete_invoice(invoice_id):
         cur.close()
         conn.close()
         return jsonify({"success": True, "message": "Invoice deleted successfully"}), 200
+    except Error as e:
+        return jsonify({"success": False, "message": f"DB error: {e}"}), 500
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Server error: {e}"}), 500
+
+# ---------- DOWNLOAD INVOICE (TXT) ----------
+
+@app.route("/api/invoices/<int:invoice_id>/download", methods=["GET"])
+def download_invoice(invoice_id):
+    try:
+        conn = get_connection()
+        cur = conn.cursor(dictionary=True)
+        cur.execute("""
+            SELECT i.*, c.name AS client_name
+            FROM invoices i
+            JOIN clients c ON i.client_id = c.id
+            WHERE i.id = %s
+        """, (invoice_id,))
+        inv = cur.fetchone()
+        if not inv:
+            cur.close()
+            conn.close()
+            return jsonify({"success": False, "message": "Invoice not found"}), 404
+
+        cur.execute("""
+            SELECT description, quantity, unit_price, gst_percentage
+            FROM invoice_items
+            WHERE invoice_id = %s
+        """, (invoice_id,))
+        items = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        lines = []
+        lines.append(f"Invoice Number: {inv['invoice_number']}")
+        lines.append(f"Client: {inv['client_name']}")
+        lines.append(f"Invoice Date: {inv['invoice_date']}")
+        lines.append(f"Due Date: {inv['due_date']}")
+        lines.append("")
+        lines.append("Items:")
+        for it in items:
+            lines.append(
+                f"- {it['description']} x {it['quantity']} @ ₹{it['unit_price']} + {it['gst_percentage']}% GST"
+            )
+        lines.append("")
+        lines.append(f"Subtotal: ₹{inv['subtotal']}")
+        lines.append(f"GST: ₹{inv['tax_total']}")
+        lines.append(f"Grand Total: ₹{inv['grand_total']}")
+        content = "\n".join(lines)
+
+        resp = make_response(content)
+        resp.headers["Content-Type"] = "text/plain; charset=utf-8"
+        resp.headers["Content-Disposition"] = f"attachment; filename={inv['invoice_number']}.txt"
+        return resp
     except Error as e:
         return jsonify({"success": False, "message": f"DB error: {e}"}), 500
     except Exception as e:

@@ -186,7 +186,7 @@
 <div class="container-main">
     <aside class="sidebar">
         <div class="sidebar-header">
-            <a href="#" class="sidebar-logo">💼 Invoice Hub v2</a>
+            <a href="#" class="sidebar-logo">💼 Invoice management System</a>
         </div>
         <nav>
             <ul class="sidebar-nav">
@@ -507,6 +507,7 @@
 
     let currentInvoiceId = null;
     let lineItemCount = 0;
+    let SAMPLE_ITEMS = [];
 
     const Views = {
         show(viewName) {
@@ -596,7 +597,16 @@
             }
             nameInput.value = '';
             showMessage('client-message', data.message, 'success');
-            await loadClients();
+            // If server returned the created client object, append it to the dropdown
+            if (data.client && document.getElementById('client-select')) {
+                const select = document.getElementById('client-select');
+                const opt = document.createElement('option');
+                opt.value = data.client.id;
+                opt.textContent = data.client.name;
+                select.appendChild(opt);
+            } else {
+                await loadClients();
+            }
         } catch (err) {
             showMessage('client-message', err.message, 'error');
         }
@@ -609,7 +619,7 @@
         const row = document.createElement('tr');
         row.innerHTML = `
             <td>
-                <input type="text" class="form-input" value="${itemData?.description || ''}"
+                <input type="text" list="sample-items" class="form-input" value="${itemData?.description || ''}"
                        placeholder="Item description" data-field="description">
             </td>
             <td>
@@ -632,6 +642,17 @@
             </td>
         `;
         row.querySelectorAll('input').forEach(inp => inp.addEventListener('input', calculateTotals));
+        // if user selects a sample item description, auto-fill price/gst
+        const descInput = row.querySelector('[data-field="description"]');
+        descInput.addEventListener('change', () => {
+            const val = descInput.value.trim();
+            const found = SAMPLE_ITEMS.find(s => s.description === val);
+            if (found) {
+                row.querySelector('[data-field="unit_price"]').value = found.unit_price;
+                row.querySelector('[data-field="gst_percentage"]').value = found.gst_percentage;
+                calculateTotals();
+            }
+        });
         row.querySelector('[data-remove]').addEventListener('click', () => {
             row.remove();
             calculateTotals();
@@ -927,7 +948,7 @@
             <div style="margin-bottom:48px;display:grid;grid-template-columns:1fr 1fr;gap:48px;">
                 <div>
                     <div style="font-size:24px;font-weight:700;color:var(--primary-color);margin-bottom:32px;">
-                        Invoice Hub v2
+                        Invoice management system
                     </div>
                     <div class="meta-field">
                         <div class="meta-label">Invoice Number</div>
@@ -1045,6 +1066,20 @@
         const today = new Date().toISOString().split('T')[0];
         document.querySelector('[name="invoice_date"]').value = today;
         await loadClients();
+        // load sample items for datalist suggestions
+        try {
+            const res = await fetch(`${API_BASE}/api/sample_items`);
+            const data = await res.json();
+            if (data && data.items) {
+                SAMPLE_ITEMS = data.items;
+                const dl = document.createElement('datalist');
+                dl.id = 'sample-items';
+                dl.innerHTML = data.items.map(it => `<option value="${it.description}"></option>`).join('');
+                document.body.appendChild(dl);
+            }
+        } catch (e) {
+            // ignore
+        }
         addLineItem();
         await refreshDashboard();
     });
